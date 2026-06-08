@@ -1,0 +1,132 @@
+"""
+简化版文档检索系统测试
+"""
+import os
+import glob
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.embeddings import OllamaEmbeddings
+from langchain_community.vectorstores import Chroma
+from langchain_core.documents import Document as LangchainDocument
+import PyPDF2
+from docx import Document
+
+def extract_text_from_file(file_path):
+    """从文件中提取文本"""
+    file_ext = os.path.splitext(file_path)[1].lower()
+    text = ""
+    
+    if file_ext == '.pdf':
+        try:
+            with open(file_path, 'rb') as file:
+                pdf_reader = PyPDF2.PdfReader(file)
+                for page in pdf_reader.pages:
+                    text += page.extract_text() + "\n"
+        except Exception as e:
+            print(f"读取PDF出错: {e}")
+    
+    elif file_ext == '.docx':
+        try:
+            doc = Document(file_path)
+            for paragraph in doc.paragraphs:
+                text += paragraph.text + "\n"
+        except Exception as e:
+            print(f"读取DOCX出错: {e}")
+    
+    return text
+
+def process_documents(folder_path):
+    """处理文件夹中的所有文档"""
+    documents = []
+    
+    # 查找所有PDF和DOCX文件
+    files = glob.glob(os.path.join(folder_path, "*.pdf")) + \
+            glob.glob(os.path.join(folder_path, "*.docx"))
+    
+    print(f"找到 {len(files)} 个文档文件")
+    
+    for file_path in files:
+        print(f"处理: {os.path.basename(file_path)}")
+        text = extract_text_from_file(file_path)
+        
+        if text.strip():
+            documents.append(LangchainDocument(
+                page_content=text,
+                metadata={'source': os.path.basename(file_path)}
+            ))
+    
+    return documents
+
+def main():
+    print("=" * 50)
+    print("文档检索系统测试")
+    print("=" * 50)
+    
+    # 1. 读取文档
+    print("\n步骤1: 读取文档")
+    print("-" * 50)
+    documents = process_documents("documents")
+    print(f"成功读取 {len(documents)} 个文档")
+    
+    # 2. 文本分块
+    print("\n步骤2: 文本分块")
+    print("-" * 50)
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1000,
+        chunk_overlap=200,
+        length_function=len,
+        separators=["\n\n", "\n", "。", "！", "？", "；", "，", " ", ""]
+    )
+    
+    chunks = []
+    for doc in documents:
+        doc_chunks = text_splitter.split_documents([doc])
+        chunks.extend(doc_chunks)
+    
+    print(f"生成 {len(chunks)} 个文本块")
+    
+    # 3. 创建向量数据库
+    print("\n步骤3: 创建向量数据库")
+    print("-" * 50)
+    
+    try:
+        # 尝试使用Ollama嵌入模型
+        embeddings = OllamaEmbeddings(
+            model="nomic-embed-text",
+            base_url="http://localhost:11434"
+        )
+        
+        vectorstore = Chroma.from_documents(
+            documents=chunks,
+            embedding=embeddings,
+            persist_directory="./chroma_db"
+        )
+        print("✓ 向量数据库创建成功")
+        
+    except Exception as e:
+        print(f"✗ 向量数据库创建失败: {e}")
+        print("请确保Ollama服务已启动")
+        return
+    
+    # 4. 测试检索
+    print("\n步骤4: 测试检索功能")
+    print("-" * 50)
+    
+    test_query = "什么是Transformer模型？"
+    print(f"查询: '{test_query}'")
+    print(f"返回前3个相关结果:\n")
+    
+    results = vectorstore.similarity_search_with_score(test_query, k=3)
+    
+    for i, (doc, score) in enumerate(results, 1):
+        print(f"结果 {i}:")
+        print(f"  相似度分数: {score:.4f}")
+        print(f"  来源文件: {doc.metadata['source']}")
+        print(f"  内容预览: {doc.page_content[:150]}...")
+        print()
+    
+    print("=" * 50)
+    print("测试完成！")
+    print("=" * 50)
+
+if __name__ == "__main__":
+    main()
