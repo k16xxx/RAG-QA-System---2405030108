@@ -1,0 +1,1 @@
+pyinstaller RAG_QA_System_simple.spec
